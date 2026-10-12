@@ -1,0 +1,28 @@
+# macOS metadata
+.DS_Store
+
+# Xcode and build artifacts
+build/
+DerivedData/
+*.xcodeproj/
+
+# Profiling and coverage files
+*.profraw
+*.profdata
+default.profraw
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local/IDE settings
+.vscode/
+.idea/
+.swiftpm/
+
+# Generated assets
+*/Assets.xcassets/
+
+# Release archives
+*.zip
+*.dmg

@@ -1,0 +1,115 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Release App
+    runs-on: macos-latest
+
+    steps:
+      - name: Determine Release Tag
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Update Info.plist Version
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ steps.vars.outputs.version }}" Pluck/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.vars.outputs.version }}" Pluck/Info.plist
+
+      - name: Run Tests
+        run: make test
+
+      - name: Build Application (Release Configuration)
+        run: |
+          xcodebuild -project Pluck.xcodeproj \
+                     -scheme Pluck \
+                     -configuration Release \
+                     -sdk macosx \
+                     build \
+                     CONFIGURATION_BUILD_DIR=${{ github.workspace }}/build/Release \
+                     CODE_SIGNING_ALLOWED=NO \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_IDENTITY=""
+
+      - name: Codesign App Bundle (Ad-hoc with Entitlements)
+        run: |
+          codesign --force --deep -s - --entitlements Pluck/Pluck.entitlements ${{ github.workspace }}/build/Release/Pluck.app
+
+      - name: Package App Bundle
+        run: |
+          # 1. Create ZIP
+          cd build/Release
+          zip -r ../../Pluck-${{ steps.vars.outputs.tag }}.zip Pluck.app
+          cd ../..
+          
+          # 2. Create DMG
+          rm -rf build/DMG
+          mkdir -p build/DMG
+          cp -R build/Release/Pluck.app build/DMG/
+          ln -s /Applications build/DMG/Applications
+          hdiutil create -volname "Pluck" -srcfolder build/DMG -ov -format UDZO Pluck-${{ steps.vars.outputs.tag }}.dmg
+          rm -rf build/DMG
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          files: |
+            Pluck-${{ steps.vars.outputs.tag }}.zip
+            Pluck-${{ steps.vars.outputs.tag }}.dmg
+          name: Release ${{ steps.vars.outputs.tag }}
+          body: |
+            ## Pluck ${{ steps.vars.outputs.tag }}
+            
+            Welcome to the new release of Pluck!
+            
+            ### Installation (Recommended)
+            1. Download `Pluck-${{ steps.vars.outputs.tag }}.dmg` below.
+            2. Double-click to open the disk image.
+            3. Drag `Pluck.app` into your `Applications` folder.
+            
+            ### Alternative Installation
+            1. Download `Pluck-${{ steps.vars.outputs.tag }}.zip` below.
+            2. Double-click to extract `Pluck.app`.
+            3. Drag it to your `/Applications` folder.
+            
+            ### macOS Gatekeeper Notice
+            As this release is ad-hoc signed:
+            - **macOS 15 (Sequoia)**: Open Terminal and run:
+              ```bash
+              xattr -cr /Applications/Pluck.app
+              ```
+            - **macOS 14 (Sonoma) and earlier**: Open **System Settings** -> **Privacy & Security**, scroll to the Security section, and click **Open Anyway**.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
